@@ -20,7 +20,9 @@ jobs:
             name: linux-x86_64
           - os: windows-latest
             name: windows-x64
-          - os: macos-latest
+          # macOS 26's SDK removed AGL. Qt 6.9.3 no longer links it, and
+          # macos-15 keeps a known-good SDK for the rest of the toolchain.
+          - os: macos-15
             name: macos-arm64
 
     steps:
@@ -29,7 +31,7 @@ jobs:
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
-          version: "6.8.3"
+          version: "6.9.3"
           cache: true
 
       - name: Configure
@@ -77,9 +79,10 @@ jobs:
           EOF
 
           # AppImage tooling requires an icon. This is only a placeholder,
-          # not the final application icon.
+          # not the final application icon. Avoid text so no font is needed
+          # on minimal CI runners.
           convert -size 256x256 xc:'#020701' -fill '#a6ff00' \
-            -gravity center -pointsize 190 -annotate 0 'N' packaging/Neo.png
+            -draw 'rectangle 32,32 224,224' packaging/Neo.png
 
           wget -q -O linuxdeploy \
             https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
