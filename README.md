@@ -5,7 +5,15 @@
 
 *Made on C++ with Qt Framework. Designed in 70s matrix style.*
 
-Currently only Linux executable is available, since I don't have access to Windows and MacOS for now.
+#### Download:
+
+Prebuilt packages are attached to the latest [GitHub Release](https://github.com/wayne-14e/neo-calc/releases/latest):
+
+- **Linux x86_64** — `Neo-linux-x86_64.AppImage` (`chmod +x` it, then run)
+- **Windows x64** — `Neo-windows-x64.zip` (extract and run `Neo.exe`)
+- **macOS Apple Silicon** — `Neo-macos-arm64.dmg`
+
+The builds are not code-signed. On macOS, use right-click → Open the first time. On Windows, SmartScreen may ask for confirmation.
 
 #### History:
 
