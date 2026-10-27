@@ -1,8 +1,8 @@
 #include "formula.h"
 
+#include <QLocale>
 #include <QString>
 
-#include <charconv>
 #include <cmath>
 #include <cstddef>
 #include <string>
@@ -172,17 +172,59 @@ private:
 
     double parseNumber()
     {
-        const char* first = source_.data() + position_;
-        const char* last = source_.data() + source_.size();
+        const std::size_t start = position_;
+        std::size_t end = start;
+        bool sawDigit = false;
+        bool sawDot = false;
+        bool sawExponent = false;
+        std::size_t exponentDigits = 0;
 
-        double value = 0.0;
-        const auto result = std::from_chars(first, last, value);
-        if (result.ec != std::errc()) {
+        while (end < source_.size()) {
+            const char character = source_[end];
+            if (isDigit(character)) {
+                sawDigit = true;
+                if (sawExponent) {
+                    ++exponentDigits;
+                }
+                ++end;
+                continue;
+            }
+            if (character == '.' && !sawDot && !sawExponent) {
+                sawDot = true;
+                ++end;
+                continue;
+            }
+            if ((character == 'e' || character == 'E') && !sawExponent
+                && sawDigit) {
+                sawExponent = true;
+                ++end;
+                if (end < source_.size()
+                    && (source_[end] == '+' || source_[end] == '-')) {
+                    ++end;
+                }
+                continue;
+            }
+            break;
+        }
+
+        if (!sawDigit || (sawExponent && exponentDigits == 0)) {
             setError(QStringLiteral("INVALID NUMBER"));
             return 0.0;
         }
 
-        position_ += static_cast<std::size_t>(result.ptr - first);
+        // QLocale::c() keeps the parser's decimal point and exponent handling
+        // deterministic, unlike std::from_chars for floating point which is not
+        // available in Apple's libc++ yet.
+        const QString token = QString::fromLatin1(source_.data() + start,
+            static_cast<qsizetype>(end - start));
+        bool parsed = false;
+        const double value = QLocale::c().toDouble(token, &parsed);
+        if (!parsed || !std::isfinite(value)) {
+            setError(QStringLiteral("INVALID NUMBER"));
+            return 0.0;
+        }
+
+        position_ = end;
         return value;
     }
 
