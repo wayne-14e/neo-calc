@@ -3,6 +3,8 @@
 - **Custom formulas**
 - **In-app session history**
 
+![app preview](preview.jpg)
+
 *Made on C++ with Qt Framework. Designed in 70s matrix style.*
 
 #### Download:
