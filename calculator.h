@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QStringList>
 #include <QWidget>
 
 #include <vector>
@@ -11,6 +12,7 @@ class QGridLayout;
 class QKeyEvent;
 class QLabel;
 class QLineEdit;
+class QPlainTextEdit;
 class QPushButton;
 class QResizeEvent;
 class QString;
@@ -41,13 +43,14 @@ private:
     void onAllClear();
     void onDeveloperToggled(bool enabled);
     void onFormulaToggled(bool enabled);
+    void onHistoryToggled(bool enabled);
     void applyFormula(const QString& expression, const QString& label);
 
     void refreshUi();
-    void initializeHistoryLog();
-    void logCompletedCalculation();
+    void recordCompletedCalculation();
     void updateDisplayFont();
     void updateHistoryText();
+    void updateHistoryView();
     void updateDeveloperView();
     void updateModeViews();
     void setErrorAppearance(bool hasError);
@@ -60,6 +63,7 @@ private:
     QLabel* modeLabel_ = nullptr;
     QPushButton* developerButton_ = nullptr;
     QPushButton* formulaButton_ = nullptr;
+    QPushButton* historyButton_ = nullptr;
     QWidget* developerView_ = nullptr;
     QWidget* developerGrid_ = nullptr;
     QLabel* developerMessageLabel_ = nullptr;
@@ -69,10 +73,13 @@ private:
     QLabel* developerBitsLabel_ = nullptr;
     QWidget* formulaView_ = nullptr;
     QLineEdit* formulaExpressionEdit_ = nullptr;
+    QWidget* historyView_ = nullptr;
+    QPlainTextEdit* historyViewText_ = nullptr;
     QString formulaStatus_;
-    QString historyFilePath_;
-    quint64 loggedCalculationCount_ = 0;
+    QStringList calculationHistory_;
+    quint64 recordedCalculationCount_ = 0;
     bool developerMode_ = false;
     bool formulaMode_ = false;
+    bool historyMode_ = false;
     std::vector<QPushButton*> calculationButtons_;
 };

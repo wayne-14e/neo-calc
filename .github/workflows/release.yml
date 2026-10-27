@@ -1,0 +1,127 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            name: linux-x86_64
+          - os: windows-latest
+            name: windows-x64
+          - os: macos-latest
+            name: macos-arm64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.3"
+          cache: true
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Package Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+          $exe = Get-ChildItem build -Recurse -Filter Neo.exe |
+            Where-Object { $_.FullName -notmatch 'CMakeFiles' } |
+            Select-Object -First 1
+          Copy-Item $exe.FullName dist\Neo.exe
+          windeployqt --release --no-translations dist\Neo.exe
+          Compress-Archive -Path dist\* -DestinationPath artifacts\Neo-windows-x64.zip
+
+      - name: Package macOS
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p artifacts
+          app="$(find build -maxdepth 3 -name Neo.app -type d | head -n 1)"
+          macdeployqt "$app" -dmg
+          mv "${app%.app}.dmg" artifacts/Neo-macos-arm64.dmg
+
+      - name: Package Linux
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y imagemagick libxcb-cursor0
+
+          mkdir -p packaging artifacts
+          cat > packaging/Neo.desktop <<'EOF'
+          [Desktop Entry]
+          Type=Application
+          Name=Neo
+          Exec=Neo
+          Icon=Neo
+          Categories=Utility;Calculator;
+          Terminal=false
+          EOF
+
+          # AppImage tooling requires an icon. This is only a placeholder,
+          # not the final application icon.
+          convert -size 256x256 xc:'#020701' -fill '#a6ff00' \
+            -gravity center -pointsize 190 -annotate 0 'N' packaging/Neo.png
+
+          wget -q -O linuxdeploy \
+            https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          wget -q -O linuxdeploy-plugin-qt \
+            https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
+          chmod +x linuxdeploy linuxdeploy-plugin-qt
+
+          export PATH="$PWD:$PATH"
+          export QMAKE="$(command -v qmake6 || command -v qmake)"
+          export APPIMAGE_EXTRACT_AND_RUN=1
+
+          ./linuxdeploy --appdir AppDir \
+            --executable build/Neo \
+            --desktop-file packaging/Neo.desktop \
+            --icon-file packaging/Neo.png \
+            --plugin qt \
+            --output appimage
+
+          mv Neo-*.AppImage artifacts/Neo-linux-x86_64.AppImage
+
+      - name: Upload packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: Neo-${{ matrix.name }}
+          path: artifacts/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish release assets
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all packages
+        uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true

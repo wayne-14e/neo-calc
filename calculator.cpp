@@ -1,9 +1,6 @@
 #include "calculator.h"
 #include "formula.h"
 
-#include <QDateTime>
-#include <QDir>
-#include <QFile>
 #include <QFontDatabase>
 #include <QFontMetrics>
 #include <QFrame>
@@ -14,12 +11,15 @@
 #include <QLineEdit>
 #include <QLocale>
 #include <QPainter>
+#include <QPlainTextEdit>
 #include <QPushButton>
 #include <QResizeEvent>
 #include <QSignalBlocker>
 #include <QSizePolicy>
-#include <QStandardPaths>
 #include <QStyle>
+#include <QTextDocument>
+#include <QTextOption>
+#include <QTime>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -199,7 +199,6 @@ Calculator::Calculator(QWidget* parent)
     resize(kInitialWindowWidth, kInitialWindowHeight);
     setFocusPolicy(Qt::StrongFocus);
 
-    initializeHistoryLog();
     buildUi();
     refreshUi();
 }
@@ -221,12 +220,9 @@ void Calculator::buildUi()
     auto* brandLabel = new QLabel(QStringLiteral("NEO//CALC"), statusBar);
     brandLabel->setObjectName(QStringLiteral("brandLabel"));
     brandLabel->setAccessibleName(tr("Neo calculator"));
-    if (!historyFilePath_.isEmpty()) {
-        brandLabel->setToolTip(
-            tr("Calculation history: %1").arg(historyFilePath_));
-        brandLabel->setAccessibleDescription(
-            tr("Calculations are saved to %1").arg(historyFilePath_));
-    }
+    brandLabel->setToolTip(tr("Session calculation history (Ctrl+H)"));
+    brandLabel->setAccessibleDescription(
+        tr("Calculations are kept in memory for this session."));
 
     modeLabel_ = new QLabel(QStringLiteral("READY"), statusBar);
     modeLabel_->setObjectName(QStringLiteral("modeLabel"));
@@ -263,11 +259,26 @@ void Calculator::buildUi()
     connect(formulaButton_, &QPushButton::toggled, this,
         &Calculator::onFormulaToggled);
 
+    historyButton_ = new QPushButton(tr("LOG"), statusBar);
+    historyButton_->setObjectName(QStringLiteral("button_history"));
+    historyButton_->setCheckable(true);
+    historyButton_->setFocusPolicy(Qt::NoFocus);
+    historyButton_->setCursor(Qt::PointingHandCursor);
+    historyButton_->setFixedHeight(20);
+    historyButton_->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+    historyButton_->setAccessibleName(tr("Toggle session history"));
+    historyButton_->setAccessibleDescription(
+        tr("Shows completed calculations from this session."));
+    historyButton_->setToolTip(tr("Show session calculation history (Ctrl+H)"));
+    connect(historyButton_, &QPushButton::toggled, this,
+        &Calculator::onHistoryToggled);
+
     statusLayout->addWidget(brandLabel);
     statusLayout->addWidget(modeLabel_);
     statusLayout->addStretch(1);
     statusLayout->addWidget(developerButton_);
     statusLayout->addWidget(formulaButton_);
+    statusLayout->addWidget(historyButton_);
     rootLayout->addWidget(statusBar);
 
     displayPanel_ = new TerminalDisplayPanel(this);
@@ -447,10 +458,43 @@ void Calculator::buildUi()
     customRow->addWidget(runButton);
     formulaViewLayout->addLayout(customRow);
 
+    historyView_ = new QWidget(displayPanel_);
+    historyView_->setObjectName(QStringLiteral("historyView"));
+    historyView_->setAccessibleName(tr("Session calculation history"));
+    historyView_->hide();
+
+    auto* historyViewLayout = new QVBoxLayout(historyView_);
+    historyViewLayout->setContentsMargins(0, 0, 0, 0);
+    historyViewLayout->setSpacing(0);
+
+    historyViewText_ = new QPlainTextEdit(historyView_);
+    historyViewText_->setObjectName(QStringLiteral("historyText"));
+    historyViewText_->setReadOnly(true);
+    historyViewText_->setUndoRedoEnabled(false);
+    historyViewText_->setLineWrapMode(QPlainTextEdit::WidgetWidth);
+    historyViewText_->setWordWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
+    historyViewText_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    historyViewText_->setFocusPolicy(Qt::NoFocus);
+    historyViewText_->setFrameShape(QFrame::NoFrame);
+    historyViewText_->document()->setDocumentMargin(4);
+    historyViewText_->setPlaceholderText(tr("NO CALCULATIONS YET"));
+    historyViewText_->setAccessibleName(tr("Completed calculations"));
+    historyViewText_->setTextInteractionFlags(
+        Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
+
+    QFont historyFont = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+    historyFont.setFamilies({QStringLiteral("Classic Console"),
+        QStringLiteral("gallant12x22"), QStringLiteral("DejaVu Sans Mono")});
+    historyFont.setPixelSize(12);
+    historyFont.setWeight(QFont::Medium);
+    historyViewText_->setFont(historyFont);
+    historyViewLayout->addWidget(historyViewText_);
+
     displayLayout->addWidget(historyLabel_);
     displayLayout->addWidget(displayLabel_, 1);
     displayLayout->addWidget(developerView_, 1);
     displayLayout->addWidget(formulaView_, 1);
+    displayLayout->addWidget(historyView_, 1);
 
     rootLayout->addWidget(displayPanel_);
 
@@ -469,7 +513,7 @@ void Calculator::buildUi()
     rootLayout->addLayout(buttonGrid, 1);
 
     auto* footerLabel = new QLabel(
-        tr("^D DEV   ^F FORMULA   DEL CLR   ESC AC"), this);
+        tr("^D DEV   ^F FORMULA   ^H LOG   DEL CLR   ESC AC"), this);
     footerLabel->setObjectName(QStringLiteral("footerLabel"));
     footerLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     footerLabel->setAccessibleName(tr("Keyboard shortcuts"));
@@ -588,7 +632,8 @@ void Calculator::buildUi()
         }
 
         QPushButton#button_developer,
-        QPushButton#button_formula {
+        QPushButton#button_formula,
+        QPushButton#button_history {
             min-width: 0px;
             min-height: 0px;
             max-height: 20px;
@@ -602,20 +647,23 @@ void Calculator::buildUi()
         }
 
         QPushButton#button_developer:hover,
-        QPushButton#button_formula:hover {
+        QPushButton#button_formula:hover,
+        QPushButton#button_history:hover {
             background-color: #a6ff00;
             border-color: #d5ff7a;
             color: #010400;
         }
 
         QPushButton#button_developer:pressed,
-        QPushButton#button_formula:pressed {
+        QPushButton#button_formula:pressed,
+        QPushButton#button_history:pressed {
             background-color: #7bc400;
             color: #010400;
         }
 
         QPushButton#button_developer:checked,
-        QPushButton#button_formula:checked {
+        QPushButton#button_formula:checked,
+        QPushButton#button_history:checked {
             background-color: #a6ff00;
             border-color: #d5ff7a;
             color: #010400;
@@ -680,6 +728,41 @@ void Calculator::buildUi()
 
         QLineEdit#formulaExpression:focus {
             border-color: #a6ff00;
+        }
+
+        QPlainTextEdit#historyText {
+            background-color: #010400;
+            border: 1px solid #365b08;
+            border-radius: 0px;
+            padding: 0px;
+            color: #b7e85c;
+            font-size: 12px;
+            font-weight: 500;
+            selection-background-color: #a6ff00;
+            selection-color: #010400;
+        }
+
+        QPlainTextEdit#historyText QScrollBar:vertical {
+            background-color: #010400;
+            width: 8px;
+            margin: 0px;
+            border: none;
+        }
+
+        QPlainTextEdit#historyText QScrollBar::handle:vertical {
+            background-color: #4a760d;
+            min-height: 18px;
+            border-radius: 0px;
+        }
+
+        QPlainTextEdit#historyText QScrollBar::add-line:vertical,
+        QPlainTextEdit#historyText QScrollBar::sub-line:vertical {
+            height: 0px;
+        }
+
+        QPlainTextEdit#historyText QScrollBar::add-page:vertical,
+        QPlainTextEdit#historyText QScrollBar::sub-page:vertical {
+            background: transparent;
         }
 
         QPushButton[buttonRole="number"] {
@@ -960,6 +1043,11 @@ void Calculator::onDeveloperToggled(bool enabled)
         const QSignalBlocker blocker(formulaButton_);
         formulaButton_->setChecked(false);
     }
+    if (enabled && historyMode_) {
+        historyMode_ = false;
+        const QSignalBlocker blocker(historyButton_);
+        historyButton_->setChecked(false);
+    }
 
     developerMode_ = enabled;
     updateModeViews();
@@ -979,10 +1067,40 @@ void Calculator::onFormulaToggled(bool enabled)
         const QSignalBlocker blocker(developerButton_);
         developerButton_->setChecked(false);
     }
+    if (enabled && historyMode_) {
+        historyMode_ = false;
+        const QSignalBlocker blocker(historyButton_);
+        historyButton_->setChecked(false);
+    }
 
     formulaMode_ = enabled;
     formulaStatus_.clear();
     updateModeViews();
+    updateHistoryText();
+    setErrorAppearance(engine_.hasError());
+
+    if (!enabled) {
+        setFocus(Qt::OtherFocusReason);
+    }
+}
+
+void Calculator::onHistoryToggled(bool enabled)
+{
+    if (enabled && developerMode_) {
+        developerMode_ = false;
+        const QSignalBlocker blocker(developerButton_);
+        developerButton_->setChecked(false);
+    }
+    if (enabled && formulaMode_) {
+        formulaMode_ = false;
+        formulaStatus_.clear();
+        const QSignalBlocker blocker(formulaButton_);
+        formulaButton_->setChecked(false);
+    }
+
+    historyMode_ = enabled;
+    updateModeViews();
+    updateHistoryView();
     updateHistoryText();
     setErrorAppearance(engine_.hasError());
 
@@ -1024,50 +1142,50 @@ void Calculator::applyFormula(const QString& expression, const QString& label)
     refreshUi();
 }
 
-void Calculator::initializeHistoryLog()
-{
-    const QString dataRoot
-        = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
-    if (dataRoot.isEmpty()) {
-        return;
-    }
-
-    // Keep the log in a stable per-user data directory rather than next to the
-    // executable, so it works from any launch directory and survives updates.
-    QDir directory(QDir(dataRoot).filePath(QStringLiteral("Neo")));
-    if (!directory.exists() && !directory.mkpath(QStringLiteral("."))) {
-        return;
-    }
-
-    historyFilePath_ = directory.filePath(QStringLiteral("history.txt"));
-}
-
-void Calculator::logCompletedCalculation()
+void Calculator::recordCompletedCalculation()
 {
     const quint64 completed = engine_.completedCalculations();
-    if (completed == loggedCalculationCount_) {
+    if (completed <= recordedCalculationCount_) {
         return;
     }
 
-    // Advance even if the log cannot be written so a later UI refresh does not
-    // duplicate an entry that was already attempted.
-    loggedCalculationCount_ = completed;
-    if (historyFilePath_.isEmpty()) {
+    // Advance even when the engine history is empty, so a later refresh cannot
+    // record the same completed calculation twice.
+    recordedCalculationCount_ = completed;
+
+    const QString history
+        = QString::fromStdString(engine_.history()).trimmed();
+    const QString result = QString::fromStdString(engine_.display()).trimmed();
+    if (history.isEmpty() || result.isEmpty()) {
         return;
     }
 
-    const QString entry
-        = QStringLiteral("[%1] %2 %3\n")
-              .arg(QDateTime::currentDateTime().toString(
-                       QStringLiteral("yyyy-MM-dd HH:mm:ss")),
-                  QString::fromStdString(engine_.history()),
-                  QString::fromStdString(engine_.display()));
+    calculationHistory_.prepend(QStringLiteral("[%1]  %2 %3")
+            .arg(QTime::currentTime().toString(QStringLiteral("HH:mm:ss")),
+                history, result));
 
-    QFile file(historyFilePath_);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text)) {
+    constexpr qsizetype kMaximumHistoryEntries = 250;
+    while (calculationHistory_.size() > kMaximumHistoryEntries) {
+        calculationHistory_.removeLast();
+    }
+
+    updateHistoryView();
+}
+
+void Calculator::updateHistoryView()
+{
+    if (!historyViewText_) {
         return;
     }
-    file.write(entry.toUtf8());
+
+    const QString text = calculationHistory_.join(QLatin1Char('\n'));
+    if (historyViewText_->toPlainText() == text) {
+        return;
+    }
+
+    // Newest entries are first, so resetting the viewport keeps the latest
+    // calculation visible when the log is reopened.
+    historyViewText_->setPlainText(text);
 }
 
 void Calculator::refreshUi()
@@ -1087,26 +1205,28 @@ void Calculator::refreshUi()
     }
 
     setErrorAppearance(hasError || hasFormulaError);
+    recordCompletedCalculation();
     updateHistoryText();
     if (developerMode_) {
         updateDeveloperView();
     }
     updateDisplayFont();
-    logCompletedCalculation();
 }
 
 void Calculator::updateModeViews()
 {
-    const bool auxiliaryView = developerMode_ || formulaMode_;
+    const bool auxiliaryView = developerMode_ || formulaMode_ || historyMode_;
 
     displayLabel_->setVisible(!auxiliaryView);
     developerView_->setVisible(developerMode_);
     formulaView_->setVisible(formulaMode_);
+    historyView_->setVisible(historyMode_);
 
     if (modeLabel_) {
         modeLabel_->setText(developerMode_
                 ? QStringLiteral("DEV")
                 : formulaMode_ ? QStringLiteral("FX")
+                : historyMode_ ? QStringLiteral("LOG")
                                : QStringLiteral("READY"));
     }
 
@@ -1161,7 +1281,7 @@ void Calculator::updateDeveloperView()
 
 void Calculator::updateDisplayFont()
 {
-    if (developerMode_ || formulaMode_) {
+    if (developerMode_ || formulaMode_ || historyMode_) {
         return;
     }
 
@@ -1188,11 +1308,21 @@ void Calculator::updateDisplayFont()
 
 void Calculator::updateHistoryText()
 {
-    if (formulaMode_) {
-        const QString displayText = QString::fromStdString(engine_.display());
-        const QString status = formulaStatus_.isEmpty()
-            ? tr("> FX BANK :: x = %1").arg(displayText)
-            : tr("> %1").arg(formulaStatus_);
+    if (formulaMode_ || historyMode_) {
+        QString status;
+        if (formulaMode_) {
+            const QString displayText = QString::fromStdString(engine_.display());
+            status = formulaStatus_.isEmpty()
+                ? tr("> FX BANK :: x = %1").arg(displayText)
+                : tr("> %1").arg(formulaStatus_);
+        } else {
+            const qsizetype count = calculationHistory_.size();
+            status = count == 0
+                ? tr("> LOG :: EMPTY")
+                : count == 1 ? tr("> LOG :: 1 ENTRY")
+                             : tr("> LOG :: %1 ENTRIES").arg(count);
+        }
+
         historyLabel_->setToolTip(status);
 
         const int availableWidth = historyLabel_->contentsRect().width();
@@ -1262,6 +1392,13 @@ void Calculator::keyPressEvent(QKeyEvent* event)
     if (event->modifiers() == Qt::ControlModifier
         && event->key() == Qt::Key_F) {
         formulaButton_->setChecked(!formulaButton_->isChecked());
+        event->accept();
+        return;
+    }
+
+    if (event->modifiers() == Qt::ControlModifier
+        && event->key() == Qt::Key_H) {
+        historyButton_->setChecked(!historyButton_->isChecked());
         event->accept();
         return;
     }

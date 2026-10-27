@@ -1,2 +1,20 @@
+# CMake build directories
 build/
+build-release/
+
+# AppImage packaging workspace and tools
+AppDir*/
+packaging/
+linuxdeploy*
+*.AppImage
+
+# Local release artifacts
+dist/
+index.html
+
+# Environment and editor files
 .env
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
